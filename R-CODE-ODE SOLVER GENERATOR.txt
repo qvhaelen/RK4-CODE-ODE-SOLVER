@@ -1,0 +1,230 @@
+####################################################################################################
+#
+#  GENERATION OF THE INPUT FILE FOR THE ODE SOLVER OF A SYSTEM STARTING FROM  THE REACTIONS FILE
+#
+####################################################################################################
+
+
+reactions_file_initial_data<-paste("C:\\Users\\Quentin\\Documents\\ADMINISTRATION\\INSILICOSCREEN\\PAPER-MARKETING THEORIQUE\\MODEL-LIF-2014-PAPER\\MODEL-FILES")
+source_code_Fortran90<-paste("C:\\Users\\Quentin\\Documents\\ADMINISTRATION\\INSILICOSCREEN\\PAPER-MARKETING THEORIQUE\\MODEL-LIF-2014-PAPER\\CODE-ODE-SOLVER-LIF\\SRC")
+
+
+list_of_repressors_genes<-paste("repressor_list_reaction.csv",sep="")
+list_of_repressors_genes_rates<-paste("repressor_list_rate_constant.csv",sep="")
+setwd(reactions_file_initial_data)
+
+number_molecules_init<-read.csv('initial_number_molecules.csv',header=FALSE)
+reactions_input <- read.csv('reactions_max.csv',header=FALSE)
+repressor_rate_constants<-read.csv(list_of_repressors_genes_rates, header =FALSE)
+repressor<-read.csv(list_of_repressors_genes, header = FALSE)
+
+# 'nbre_reactions' is the total number of reactions (forward+backward) in the network
+# 'nbre_species' is the number of chemical  species appearing in the chemical  equations
+
+nbre_reactions<- reactions_input[1,5]
+nbre_species<- reactions_input[2,5]
+nbre_species_active_ode<- reactions_input[3,5]
+
+####################################################################################################
+# creation of the matrix for the p coefficients
+
+p_coefficients<-matrix(nrow = nbre_species,  ncol = nbre_reactions)
+p_coefficients[,]<- 0
+# coefficients are postive in the right side (columns 10-11)
+
+for (i in 1:nbre_reactions){
+
+    if (is.na(reactions_input[i,10]) == FALSE && is.na(reactions_input[i,11]) == FALSE){
+        if (reactions_input[i,10] == reactions_input[i,11]){p_coefficients[reactions_input[i,10], i] <-2}
+        if (reactions_input[i,10] != reactions_input[i,11]){
+          p_coefficients[reactions_input[i,10], i] <-1
+          p_coefficients[reactions_input[i,11], i] <-1
+        }
+     }
+ if (is.na(reactions_input[i,10]) == FALSE && is.na(reactions_input[i,11]) != FALSE){
+       p_coefficients[reactions_input[i,10], i] <-1
+ }
+ if (is.na(reactions_input[i,10]) != FALSE && is.na(reactions_input[i,11]) == FALSE){
+       p_coefficients[reactions_input[i,11], i] <-1
+ }
+
+}
+####################################################################################################
+# creation of the matrix for the r coefficients
+
+r_coefficients<-matrix(nrow = nbre_species,  ncol = nbre_reactions)
+r_coefficients[,] <-0
+# coefficients are postive in the right side (columns 8-9)
+
+for (i in 1:nbre_reactions){
+
+    if (is.na(reactions_input[i,8]) == FALSE && is.na(reactions_input[i,9]) == FALSE){
+        if (reactions_input[i,8] == reactions_input[i,9]){r_coefficients[-reactions_input[i,9], i] <-2}
+        if (reactions_input[i,8] != reactions_input[i,9]){
+          r_coefficients[-reactions_input[i,8], i] <-1
+          r_coefficients[-reactions_input[i,9], i] <-1
+        }
+     }
+ if (is.na(reactions_input[i,8]) == FALSE && is.na(reactions_input[i,9]) != FALSE){
+       r_coefficients[-reactions_input[i,8], i] <-1
+ }
+ if (is.na(reactions_input[i,8]) != FALSE && is.na(reactions_input[i,9]) == FALSE){
+       r_coefficients[-reactions_input[i,9], i] <-1
+ }
+
+}
+####################################################################################################
+# creation de la matrice p-r
+
+diff_pr<-matrix(nrow = nbre_species,ncol = nbre_reactions )
+
+diff_pr =   p_coefficients- r_coefficients
+####################################################################################################
+# creation de la matrice phi
+
+phi_k<-matrix(nrow = nbre_reactions , ncol = 1)
+phi_k<-as.vector(phi_k)
+
+for (j in 1:nbre_reactions){
+ if (repressor[1,j] == 0){
+  phi_k[j] <-paste("k(",j,")",sep="")
+ }
+ if (repressor[1,j] != 0){
+  global_rep<-matrix(nrow = 1, ncol = 1)
+  global_rep<-""
+  rep<-repressor[1,j]+1
+  for (repression in 2:rep){
+   rep_vector<-paste("(1.0/(1.0+",repressor_rate_constants[repression,j],"*X(",repressor[repression,j],")))",sep="")
+   global_rep<-paste(global_rep,rep_vector,"*",sep="")
+  }
+  phi_k[j] <-paste("k(",j,")*",global_rep,sep="")
+ } # end if repressor !=0
+ if (repressor[1,j] == 0){
+ for( i in 1:nbre_species){
+    if ( r_coefficients[i,j] !=0) { 
+     if ( r_coefficients[i,j] >1){phi_k[j] <-paste(phi_k[j], "*(X(", i,")**", r_coefficients[i,j],")"  ,sep="")}
+     if ( r_coefficients[i,j] == 1){phi_k[j] <-paste(phi_k[j], "*X(", i,")",sep="")}
+    }
+ }
+} # end if 
+if (repressor[1,j] != 0){
+ closure<-0
+ for( i in 1:nbre_species){
+    if ( r_coefficients[i,j] !=0) { closure<-1
+     if ( r_coefficients[i,j] >1){phi_k[j] <-paste(phi_k[j], "(X(", i,")**", r_coefficients[i,j],")"  ,sep="")}
+     if ( r_coefficients[i,j] == 1){phi_k[j] <-paste(phi_k[j], "X(", i,")",sep="")}
+    }
+   
+ }
+ if (closure ==0){phi_k[j] <-paste(phi_k[j], "1.0",sep="")}
+} # end if 
+
+}
+
+###################################################################################################
+# construction de la fonction Q (ou F) pour chaque variable dynamique
+
+F<- matrix(nrow =nbre_species_active_ode,  ncol = 1 )
+F<-as.vector(F)
+F[]<- "0.0"
+for(i in 1:nbre_species_active_ode){
+ for (j in 1:nbre_reactions){
+  if (diff_pr[i,j] ==1){ F[i]<-paste(F[i],"+",phi_k[j] ,sep="" )}
+  if (diff_pr[i,j] ==-1){ F[i]<-paste(F[i],"-", phi_k[j] ,sep="" )}
+  if (abs(diff_pr[i,j]) > 1){
+   if (diff_pr[i,j] <0){ F[i]<-paste(F[i],diff_pr[i,j],"*", phi_k[j] ,sep="" )}
+   if (diff_pr[i,j] >0){ F[i]<-paste(F[i],"+",diff_pr[i,j],"*", phi_k[j] ,sep="" )}
+  }
+ }
+}
+
+
+## version deux
+
+
+F_bis<- matrix(nrow =nbre_species_active_ode,  ncol = 1 )
+F_bis<-as.vector(F_bis)
+F_bis[]<- "0.0"
+for(i in 1:nbre_species_active_ode){
+ for (j in 1:nbre_reactions){
+  if (diff_pr[i,j] ==1){ F_bis[i]<-paste(F_bis[i],"+","phi_k(",j,")" ,sep="" )}
+  if (diff_pr[i,j] ==-1){ F_bis[i]<-paste(F_bis[i],"-"," phi_k(",j,")" ,sep="" )}
+  if (abs(diff_pr[i,j]) > 1){
+   if (diff_pr[i,j] <0){ F_bis[i]<-paste(F_bis[i],diff_pr[i,j],"*", "phi_k(",j,")" ,sep="" )}
+   if (diff_pr[i,j] >0){ F_bis[i]<-paste(F_bis[i],"+",diff_pr[i,j],"*", "phi_k(",j,")" ,sep="" )}
+  }
+ }
+}
+
+
+###############
+value_rate_constant <- read.csv('rate_constants.csv',header=FALSE)
+
+reactions_rate<-matrix(nrow = nbre_reactions, ncol =1)
+reactions_rate<-as.vector(reactions_rate)
+
+for(i in 1:nbre_reactions){
+   reactions_rate[i]<-paste("k(",i,")=",value_rate_constant[i,2],sep="")
+}
+
+###################################################################################################
+# generation des fichiers f90...
+setwd(source_code_Fortran90)
+subroutine_initial_conditions<-matrix(nrow = 5+nbre_reactions+3+nbre_species, ncol = 1)
+
+# subroutine_initial_conditions<-as.vector(subroutine_initial_conditions)
+
+subroutine_initial_conditions[,]<-"NA?#"
+
+
+subroutine_initial_conditions[1,1]<-paste("subroutine initial_conditions()", sep="")
+subroutine_initial_conditions[2,1]<-paste("use global_variables", sep="")
+subroutine_initial_conditions[3,1]<-paste("implicit none", sep="")
+subroutine_initial_conditions[4,1]<-paste("", sep="")
+for (i in 1:nbre_reactions){
+subroutine_initial_conditions[i+4,1]<-paste( reactions_rate[i],sep="")
+}
+for (i in 1:nbre_species){
+subroutine_initial_conditions[i+4+nbre_reactions,1]<-paste("X(",i,")=",number_molecules_init[i,1],sep="")
+}
+
+subroutine_initial_conditions[5+nbre_reactions+nbre_species,1]<-paste("end subroutine initial_conditions ",sep="")
+
+for (i in 1:nrow(subroutine_initial_conditions)){
+if (as.character(subroutine_initial_conditions[i,1])==as.character("NA?#")){subroutine_initial_conditions[i,1]<-""}
+}
+
+write(subroutine_initial_conditions, file="initial_conditions.f90")
+
+###################################################################################################
+# subroutine contenant les vecteurs phi  et F
+
+phi_F_functions<-matrix(nrow = 5+nbre_reactions+3+nbre_species, ncol = 1)
+
+phi_F_functions[,]<-"NA?#"
+
+
+
+phi_F_functions[1,1]<-paste("subroutine phi_F_functions()", sep="")
+phi_F_functions[2,1]<-paste("use global_variables", sep="")
+phi_F_functions[3,1]<-paste("implicit none", sep="")
+phi_F_functions[4,1]<-paste("", sep="")
+
+for (i in 1:nbre_reactions){phi_F_functions[5+i,1]<-paste("phi_k(",i,")=",phi_k[i],sep="")}
+for (i in 1:nbre_species_active_ode){phi_F_functions[i+nbre_reactions+5,1]<-paste("F(",i,")=",F_bis[i],sep="")}
+#for (i in 1:nbre_species_active_ode){phi_F_functions[i+nbre_reactions+5,1]<-paste("F(",i,")=",F[i],sep="")}
+
+phi_F_functions[5+nbre_reactions+nbre_species_active_ode+1,1]<-paste("end subroutine phi_F_functions ",sep="")
+
+
+for (i in 1:nrow(phi_F_functions)){
+if (as.character(phi_F_functions[i,1])==as.character("NA?#")){phi_F_functions[i,1]<-""}
+}
+write(phi_F_functions, file="F_phi_functions.f90")
+
+
+
+
+
+
+
